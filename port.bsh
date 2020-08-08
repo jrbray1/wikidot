@@ -1,0 +1,123 @@
+#!/bin/bash
+# Convert a wikidot dump to a file ready for mediawiki import
+# Usage: port.bsh *.txt
+# Output is fixedpages, which can be imported into mediawiki
+
+MW1=mw1
+MW2=mw2
+CATEGORIES=categories
+PAGES=pages
+WIKIDOT=wikidot
+TITLES=titles
+TITLES1=titles1
+TITLES2=titles2
+TITLES3=titles3
+TITLES5=titles5
+NOTAGS=notags
+TAGFILE=tags
+REDIRECTS=redirects
+REDIRECTS1=redirects1
+RETAGS=retags
+rm -f $PAGES $WIKIDOT $TITLES $TITLES1 $TITLES2 $TITLES3 $TITLES5 \
+  $TAGFILE $REDIRECTS $NOTAGS $RETAGS $REDIRECTS1
+
+export TARGET
+export TITLE
+
+while test $# -gt 0; do
+  FILE=$1
+  echo $FILE
+  PAGE=${FILE%%.txt}
+  PAGE1=$(echo $PAGE | sed 's`\-` `g')
+  TITLE=$(cat $PAGE.xml | sed -E 's`.*<title>(.*)<\/title\>(.*)`\1`1')
+  TITLE1=$(echo $TITLE | tr '[:upper:]' '[:lower:]')
+  TITLE2=$(echo $TITLE | sed -E 's`^(.*) \(.*\)(.*)`\1\2`1')
+  TITLE3=$(echo $TITLE)
+  TITLE4=$(echo $TITLE | sed 's` `%20`g')
+
+  sed -Ef port.sed $FILE > $MW1
+
+  grep -q '#REDIRECT' $MW1
+  if test $? -eq 0; then
+    REDIRECTED=true
+  else
+    REDIRECTED=false
+  fi
+    
+  TAGS=$(cat $PAGE.xml | sed -E 's`.*<tags>(.*)<\/tags\>(.*)`\1`1')
+  TAGS=$(echo $TAGS | grep '<tag>' |sed -E 's`<tag>``g' | sed -E 's`</tag>` `g')
+
+  if $REDIRECTED; then
+    REDIRECT=$(grep '#REDIRECT' $MW1 | sed -E 's`#REDIRECT \[\[(.*)\]\]`\1`1')
+    REDIRECT1=$(echo $REDIRECT | sed 's` `-`g; s`\.`-`g; s`--`-`g'|tr '[:upper:]' '[:lower:]')
+    REDIRECT2=$(cat "$REDIRECT1.xml" 2>/dev/null | sed -E 's`.*<title>(.*)<\/title\>(.*)`\1`1')
+  
+    if test "$REDIRECT2." != "."; then
+      echo $FILE $REDIRECT2 >> $REDIRECTS
+      echo $TITLE >> $REDIRECTS1
+      if test "$TAGS." != "."; then
+        echo $FILE $TITLE $TAGS >> $RETAGS
+      fi
+      sed -i 's%#REDIRECT \[\[.*\]\]%#REDIRECT [['"$REDIRECT2"']]%1' $MW1
+    fi
+    echo $TITLE REDIRECTED $TAGS >> $TAGFILE
+  else
+    echo $PAGE $TITLE >> $TITLES
+    # sort titles1 | uniq -D to check for duplicates
+    echo $TITLE >> $TITLES1
+    #echo $TITLE5 >> $TITLES5
+    echo $TITLE $TAGS >> $TAGFILE
+  fi
+  echo $TITLE2 >> $TITLES2
+ 
+  echo '{{-start-}}' > $MW2
+  echo "'''$TITLE'''" >> $MW2
+  if test "$TITLE" != "$PAGE1"; then
+    echo "Changing $PAGE to $TITLE, display as $TITLE2" >> $TITLES3
+    if test "$TITLE" != "$TITLE2"; then
+      echo "{{DISPLAYTITLE:$TITLE2}}" >> $MW2
+    fi
+  fi
+
+  echo >> $MW2
+  
+  cat $MW1 | uniq |sed "s@TITLE@$TITLE@g">> $MW2
+ 
+  if ! $REDIRECTED; then
+    # we don't want to categorise redirects
+    if test "$TAGS." != "."; then
+      echo >> $MW2
+
+      rm -f $CATEGORIES
+      for TAG in $TAGS; do
+        echo "[[Category:$TAG]]" >>$CATEGORIES
+      done
+      if test -f $CATEGORIES; then
+        sort $CATEGORIES | uniq >> $MW2
+      fi
+    else
+      echo "[[Category:none]]" >>$MW2
+      echo $PAGE >> $NOTAGS
+    fi
+  else
+    echo "[[Category:redirect]]" >>$MW2
+  fi
+  echo '{{-stop-}}' >> $MW2
+  if test "${PAGE:1}" != "${TITLE:1}"; then
+    # Provide a redirect from wikidot to medawiki format if they differ after first letter
+    echo '{{-start-}}' >> $WIKIDOT
+    echo "'''$PAGE'''" >> $WIKIDOT
+    echo >> $WIKIDOT
+    echo '#REDIRECT' '[['$TITLE']]' >> $WIKIDOT
+    echo >> $WIKIDOT
+    echo '[[Category:wikidot]]' >> $WIKIDOT
+    echo '{{-stop-}}' >> $WIKIDOT
+  fi
+
+  cat $MW2 >> $PAGES
+  mv $MW2  ${FILE%%txt}mediawiki
+
+  shift 1
+done
+
+rm -f $MW1 $MW2 $CATEGORIES
